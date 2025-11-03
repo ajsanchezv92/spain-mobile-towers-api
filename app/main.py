@@ -12,13 +12,13 @@ from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from functools import lru_cache
 from collections import Counter
 from loguru import logger
-import json
-import math
-import requests
 import os
+
+🔹 Importaciones nuevas para utils y variables de entorno
+
+from app.utils import load_antenas, haversine
 
 ============================================================
 
@@ -49,48 +49,6 @@ allow_headers=["*"],
 Middleware GZIP (reduce tamaño de respuesta hasta 5×)
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
-
-URL del dataset alojado en Google Drive
-
-ANTENAS_URL = "https://drive.google.com/uc?export=download&id=156kbTsnPQzPh-z0Fz1wc3DdvLEonShKd"
-
-============================================================
-
-🧠 UTILIDADES Y CARGA DE DATOS
-
-============================================================
-
-@lru_cache(maxsize=2)
-def load_antenas():
-"""
-📡 Descarga el JSON y lo cachea en memoria bajo demanda.
-🔹 Evita cargar todo en memoria al inicio (resuelve error 502 en Render Free)
-"""
-logger.info("📡 Descargando antenas desde Google Drive...")
-try:
-r = requests.get(ANTENAS_URL, timeout=120)
-r.raise_for_status()
-data = json.loads(r.text)
-logger.success(f"✅ Antenas cargadas correctamente: {len(data)} registros")
-return data
-except Exception as e:
-logger.error(f"❌ Error cargando antenas: {e}")
-return []
-
-============================================================
-
-🌍 FUNCIONES AUXILIARES
-
-============================================================
-
-def haversine(lat1, lon1, lat2, lon2):
-"""Calcula la distancia (en metros) entre dos coordenadas GPS."""
-R = 6371000
-phi1, phi2 = math.radians(lat1), math.radians(lat2)
-dphi = math.radians(lat2 - lat1)
-dlambda = math.radians(lon2 - lon1)
-a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 ============================================================
 
