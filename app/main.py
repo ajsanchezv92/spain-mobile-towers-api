@@ -1,9 +1,18 @@
-from fastapi import FastAPI, Query, HTTPException
+# ============================================================
+# 🇪🇸 SPAIN MOBILE TOWERS API — Versión Avanzada 2.0
+# Autor: Antonio Sánchez
+# Mejora: Chapi 🤖 (Optimizaciones de rendimiento, endpoints y documentación)
+# ============================================================
+
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from functools import lru_cache
+from collections import Counter
+from loguru import logger
 import json
 import math
-from collections import Counter
 import requests
 
 # ============================================================
@@ -12,15 +21,15 @@ import requests
 
 app = FastAPI(
     title="Spain Mobile Towers API",
-    version="1.1",
+    version="2.0",
     description=(
         "API pública para consultar antenas móviles en España.\n\n"
-        "Permite filtrar por operador, provincia, municipio, y localizar antenas cercanas.\n"
-        "Fuente oficial: Geoportal del Ministerio de Industria."
+        "Incluye búsquedas por operador, localización, radio y estadísticas avanzadas.\n"
+        "Fuente oficial: Geoportal del Ministerio de Industria, Comercio y Turismo."
     ),
 )
 
-# Habilitar CORS para acceso desde RapidAPI u otros clientes
+# Middleware CORS (para acceso libre desde RapidAPI, Postman, etc.)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,28 +37,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# URL directa del dataset JSON (Google Drive)
+# Middleware GZIP (reduce tamaño de respuesta hasta 5×)
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
+# URL del dataset alojado en Google Drive
 ANTENAS_URL = "https://drive.google.com/uc?export=download&id=156kbTsnPQzPh-z0Fz1wc3DdvLEonShKd"
 
 # ============================================================
-# 📥 CARGA DE DATOS
+# 🧠 UTILIDADES Y CARGA DE DATOS
 # ============================================================
 
+@lru_cache(maxsize=2)
 def load_antenas():
-    """Descarga el JSON desde Google Drive y lo carga en memoria."""
-    print("📡 Descargando antenas desde Google Drive...")
+    """📡 Descarga el JSON y lo cachea en memoria (mejora de rendimiento)."""
+    logger.info("📡 Descargando antenas desde Google Drive...")
     try:
         r = requests.get(ANTENAS_URL, timeout=120)
         r.raise_for_status()
         data = json.loads(r.text)
-        print(f"✅ Antenas cargadas correctamente: {len(data)} registros")
+        logger.success(f"✅ Antenas cargadas correctamente: {len(data)} registros")
         return data
     except Exception as e:
-        print(f"❌ Error cargando antenas: {e}")
+        logger.error(f"❌ Error cargando antenas: {e}")
         return []
 
-# Cargar datos al iniciar
+# Carga inicial (queda cacheada)
 ANTENAS = load_antenas()
+
+# ============================================================
+# 🌍 FUNCIONES AUXILIARES
+# ============================================================
+
+def haversine(lat1, lon1, lat2, lon2):
+    """Calcula la distancia (en metros) entre dos coordenadas GPS."""
+    R = 6371000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 # ============================================================
 # 🌐 ENDPOINTS PRINCIPALES
@@ -57,20 +83,20 @@ ANTENAS = load_antenas()
 
 @app.get("/")
 def home():
-    """Página de inicio con metadatos básicos."""
+    """🏠 Página de inicio con metadatos y estado."""
     return {
         "message": "📡 Spain Mobile Towers API está en línea.",
-        "version": "1.1",
+        "version": "2.0",
         "author": "Antonio Sánchez",
-        "docs_url": "/docs",
         "total_antenas": len(ANTENAS),
+        "endpoints": ["/antenas", "/antenas/near", "/antenas/info", "/antenas/stats/coverage", "/antenas/geojson"],
         "status": "✅ online",
     }
 
 
 @app.get("/healthz")
 def health():
-    """Verifica el estado del servicio."""
+    """Verifica la salud del servicio (monitorización)."""
     return {"status": "ok"}
 
 
@@ -80,39 +106,39 @@ def list_antenas(
     municipio: str | None = None,
     operador: str | None = None,
     tecnologia: str | None = None,
+    lat_min: float | None = None,
+    lat_max: float | None = None,
+    lon_min: float | None = None,
+    lon_max: float | None = None,
     page: int = 1,
     limit: int = 100
 ):
-    """Lista antenas con filtros opcionales."""
-    filtered = ANTENAS
+    """
+    📋 Lista antenas filtrando por múltiples campos combinados.
+    Ejemplo:
+      /antenas?operador=Movistar&provincia=Madrid&page=1&limit=50
+    """
+    data = ANTENAS
 
-    # Aplicar filtros dinámicos
+    # Filtros dinámicos
     if provincia:
-        filtered = [a for a in filtered if provincia.lower() in a.get("direccion", "").lower()]
+        data = [a for a in data if provincia.lower() in a.get("direccion", "").lower()]
     if municipio:
-        filtered = [a for a in filtered if municipio.lower() in a.get("direccion", "").lower()]
+        data = [a for a in data if municipio.lower() in a.get("direccion", "").lower()]
     if operador:
-        filtered = [a for a in filtered if operador.lower() in a.get("operador", "").lower()]
+        data = [a for a in data if operador.lower() in a.get("operador", "").lower()]
     if tecnologia:
-        filtered = [a for a in filtered if tecnologia.lower() in a.get("tecnologia", "").lower()]
+        data = [a for a in data if tecnologia.lower() in a.get("tecnologia", "").lower()]
+    if lat_min and lat_max and lon_min and lon_max:
+        data = [a for a in data if lat_min <= a["lat"] <= lat_max and lon_min <= a["lon"] <= lon_max]
 
     # Paginación
-    start = (page - 1) * limit
-    end = start + limit
-    results = filtered[start:end]
+    start, end = (page - 1) * limit, page * limit
+    results = data[start:end]
 
     if not results:
         raise HTTPException(status_code=404, detail="No se encontraron antenas con esos filtros.")
     return JSONResponse(results)
-
-
-@app.get("/antenas/{antena_id}")
-def get_antena(antena_id: int):
-    """Obtiene información detallada de una antena por su ID."""
-    a = next((a for a in ANTENAS if a.get("id") == antena_id), None)
-    if not a:
-        raise HTTPException(status_code=404, detail="Antena no encontrada.")
-    return a
 
 
 @app.get("/antenas/near")
@@ -122,45 +148,95 @@ def antenas_near(
     radio_m: int = Query(5000, description="Radio de búsqueda en metros"),
     limit: int = Query(50, description="Número máximo de resultados")
 ):
-    """Busca antenas cercanas a unas coordenadas dadas."""
-    def distance(a):
-        R = 6371000  # radio terrestre en metros
-        phi1 = math.radians(lat)
-        phi2 = math.radians(a["lat"])
-        dphi = math.radians(a["lat"] - lat)
-        dlambda = math.radians(a["lon"] - lon)
-        h = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-        return 2 * R * math.atan2(math.sqrt(h), math.sqrt(1 - h))
-
-    nearby = [a for a in ANTENAS if a.get("lat") and a.get("lon") and distance(a) <= radio_m]
-    nearby.sort(key=distance)
+    """🔎 Busca antenas cercanas a unas coordenadas usando la fórmula de Haversine."""
+    nearby = [a for a in ANTENAS if "lat" in a and "lon" in a and haversine(lat, lon, a["lat"], a["lon"]) <= radio_m]
+    nearby.sort(key=lambda a: haversine(lat, lon, a["lat"], a["lon"]))
     return JSONResponse(nearby[:limit])
 
 
-@app.get("/stats")
-def stats():
-    """Devuelve estadísticas agregadas por operador y tecnología."""
-    op_counter = Counter(a.get("operador", "Desconocido") for a in ANTENAS)
-    tech_counter = Counter(a.get("tecnologia", "Desconocida") for a in ANTENAS if a.get("tecnologia"))
+# ============================================================
+# 📊 ENDPOINTS AVANZADOS (nuevos)
+# ============================================================
+
+@app.get("/antenas/info")
+def info_operador(operador: str):
+    """
+    📈 Devuelve resumen estadístico de un operador:
+    - Número total de antenas
+    - Provincias donde opera
+    - Porcentaje relativo de cobertura
+    """
+    data = [a for a in ANTENAS if operador.lower() in a.get("operador", "").lower()]
+    if not data:
+        raise HTTPException(status_code=404, detail=f"No se encontraron antenas de {operador}.")
+    provincias = Counter([a["direccion"].split(",")[-1].strip() for a in data])
     return {
-        "by_operator": dict(op_counter),
-        "by_technology": dict(tech_counter)
+        "operador": operador,
+        "total_antenas": len(data),
+        "provincias": dict(provincias),
+        "porcentaje_total": round(len(data) / len(ANTENAS) * 100, 2)
+    }
+
+
+@app.get("/antenas/stats/coverage")
+def stats_coverage():
+    """📡 Estadísticas globales: cuántas antenas hay por operador y provincia."""
+    op_counter = Counter(a.get("operador", "Desconocido") for a in ANTENAS)
+    prov_counter = Counter(a.get("direccion", "").split(",")[-1].strip() for a in ANTENAS)
+    return {
+        "total_antenas": len(ANTENAS),
+        "por_operador": dict(op_counter),
+        "por_provincia": dict(prov_counter)
+    }
+
+
+@app.get("/antenas/geojson")
+def geojson():
+    """🌍 Devuelve las antenas en formato GeoJSON (compatible con Mapbox/Leaflet)."""
+    features = [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [a["lon"], a["lat"]]},
+            "properties": {
+                "direccion": a.get("direccion"),
+                "operador": a.get("operador"),
+                "url": a.get("url")
+            },
+        }
+        for a in ANTENAS if "lat" in a and "lon" in a
+    ]
+    return {"type": "FeatureCollection", "features": features}
+
+
+@app.get("/antenas/rankings")
+def rankings(top_n: int = 10):
+    """
+    🏆 Rankings dinámicos:
+    - Top provincias por número de antenas
+    - Top operadores por cobertura
+    """
+    prov_counter = Counter(a.get("direccion", "").split(",")[-1].strip() for a in ANTENAS)
+    op_counter = Counter(a.get("operador", "Desconocido") for a in ANTENAS)
+    return {
+        "top_provincias": prov_counter.most_common(top_n),
+        "top_operadores": op_counter.most_common(top_n)
     }
 
 # ============================================================
-# 🧩 MANEJO DE ERRORES PERSONALIZADO
+# ⚠️ MANEJO DE ERRORES
 # ============================================================
 
 @app.exception_handler(HTTPException)
-def http_exception_handler(request, exc):
+def http_exception_handler(request: Request, exc: HTTPException):
+    logger.warning(f"⚠️ {exc.detail}")
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": exc.detail, "status": exc.status_code},
     )
 
-
 @app.exception_handler(Exception)
-def generic_exception_handler(request, exc):
+def generic_exception_handler(request: Request, exc: Exception):
+    logger.exception(f"💥 Error interno: {exc}")
     return JSONResponse(
         status_code=500,
         content={"error": "Error interno del servidor", "detail": str(exc)},
