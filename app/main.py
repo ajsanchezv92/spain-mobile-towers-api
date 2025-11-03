@@ -8,6 +8,7 @@ from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from collections import Counter
 from loguru import logger
 import os
 
@@ -57,7 +58,14 @@ def home():
         "version": "2.1",
         "author": "Antonio Sánchez",
         "total_antenas": len(antenas),
-        "endpoints": ["/antenas", "/antenas/near", "/antenas/info", "/antenas/stats/coverage", "/antenas/geojson"],
+        "endpoints": [
+            "/antenas", 
+            "/antenas/near", 
+            "/antenas/info", 
+            "/antenas/stats/coverage", 
+            "/antenas/geojson",
+            "/antenas/rankings"
+        ],
         "status": "✅ online",
     }
 
@@ -107,6 +115,7 @@ def list_antenas(
 
     if not results:
         raise HTTPException(status_code=404, detail="No se encontraron antenas con esos filtros.")
+    
     return JSONResponse(content=results, media_type="application/json")
 
 
@@ -123,11 +132,12 @@ def antenas_near(
     
     nearby = [a for a in antenas if "lat" in a and "lon" in a and haversine(lat, lon, a["lat"], a["lon"]) <= radio_m]
     nearby.sort(key=lambda a: haversine(lat, lon, a["lat"], a["lon"]))
+    
     return JSONResponse(content=nearby[:limit], media_type="application/json")
 
 
 # ============================================================
-# 📊 ENDPOINTS AVANZADOS (nuevos)
+# 📊 ENDPOINTS AVANZADOS
 # ============================================================
 
 @app.get("/antenas/info")
@@ -146,6 +156,7 @@ def info_operador(operador: str):
         raise HTTPException(status_code=404, detail=f"No se encontraron antenas de {operador}.")
     
     provincias = Counter([a["direccion"].split(",")[-1].strip() for a in data])
+    
     return {
         "operador": operador,
         "total_antenas": len(data),
@@ -160,9 +171,9 @@ def stats_coverage():
     # Carga bajo demanda
     antenas = load_antenas()
     
-    from collections import Counter
     op_counter = Counter(a.get("operador", "Desconocido") for a in antenas)
     prov_counter = Counter(a.get("direccion", "").split(",")[-1].strip() for a in antenas)
+    
     return {
         "total_antenas": len(antenas),
         "por_operador": dict(op_counter),
@@ -188,6 +199,7 @@ def geojson():
         }
         for a in antenas if "lat" in a and "lon" in a
     ]
+    
     return {"type": "FeatureCollection", "features": features}
 
 
@@ -201,13 +213,14 @@ def rankings(top_n: int = 10):
     # Carga bajo demanda
     antenas = load_antenas()
     
-    from collections import Counter
     prov_counter = Counter(a.get("direccion", "").split(",")[-1].strip() for a in antenas)
     op_counter = Counter(a.get("operador", "Desconocido") for a in antenas)
+    
     return {
         "top_provincias": prov_counter.most_common(top_n),
         "top_operadores": op_counter.most_common(top_n)
     }
+
 
 # ============================================================
 # ⚠️ MANEJO DE ERRORES
@@ -229,6 +242,7 @@ def generic_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"error": "Error interno del servidor", "detail": str(exc)},
     )
+
 
 # ============================================================
 # 🚀 INICIALIZACIÓN SEGURA
