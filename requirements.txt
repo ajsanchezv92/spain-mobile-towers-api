@@ -6,3 +6,4 @@ orjson==3.10.7
 aiofiles==24.1.0
 starlette==0.38.2
 pydantic==2.8.2
+python-dotenv==1.0.0
