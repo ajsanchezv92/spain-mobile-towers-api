@@ -1,5 +1,5 @@
 # ============================================================
-# 🇪🇸 SPAIN MOBILE TOWERS API — Versión Avanzada 2.1
+# 🇪🇸 SPAIN MOBILE TOWERS API — Versión Avanzada 3.0
 # Autor: Antonio Sánchez
 # Mejora: Chapi 🤖 (Optimizaciones de compatibilidad, CORS y despliegue)
 # ============================================================
@@ -18,7 +18,7 @@ import os
 
 app = FastAPI(
     title="Spain Mobile Towers API",
-    version="2.1",
+    version="3.0",
     description=(
         "API pública para consultar antenas móviles en España.\n\n"
         "Incluye búsquedas por operador, localización, radio y estadísticas avanzadas.\n"
@@ -55,7 +55,7 @@ def home():
     antenas = load_antenas()
     return {
         "message": "📡 Spain Mobile Towers API está en línea.",
-        "version": "2.1",
+        "version": "3.0",
         "author": "Antonio Sánchez",
         "total_antenas": len(antenas),
         "endpoints": [
@@ -64,15 +64,18 @@ def home():
             "/antenas/info", 
             "/antenas/stats/coverage", 
             "/antenas/geojson",
-            "/antenas/rankings"
+            "/antenas/rankings",
+            "/map/stats",           # 🆕 Compatible con dashboard
+            "/map/antenas"          # 🆕 Compatible con dashboard
         ],
         "status": "✅ online",
+        "compatible_with": "spain-towers-visualizer"  # 🆕 Indicador de compatibilidad
     }
 
 
 @app.get("/healthz")
 def health():
-    """Verifica la salud del servicio (monitorización)."""
+    """❤️ Verifica la salud del servicio (monitorización)."""
     return {"status": "ok"}
 
 
@@ -223,6 +226,133 @@ def rankings(top_n: int = 10):
 
 
 # ============================================================
+# 🗺️ ENDPOINTS COMPATIBLES CON DASHBOARD (NUEVOS)
+# ============================================================
+
+@app.get("/map/stats")
+def get_map_stats():
+    """
+    📊 Endpoint específico para el dashboard Spain Towers Visualizer.
+    
+    Proporciona estadísticas en formato optimizado para visualización:
+    - Total de antenas
+    - Distribución por operador
+    - Distribución por tecnología
+    
+    Compatible con: https://github.com/ajsanchezv92/spain-towers-visualizer
+    """
+    # Carga bajo demanda - mismo sistema que endpoints existentes
+    antenas = load_antenas()
+    
+    # Calcular estadísticas optimizadas para dashboard
+    operadores = {}
+    tecnologias = {}
+    
+    for antenna in antenas:
+        op = antenna.get("operador", "Desconocido")
+        tech = antenna.get("tecnologia", "Desconocida")
+        
+        operadores[op] = operadores.get(op, 0) + 1
+        tecnologias[tech] = tecnologias.get(tech, 0) + 1
+    
+    logger.info(f"📈 Estadísticas enviadas al dashboard: {len(antenas)} antenas")
+    
+    return {
+        "total_antenas": len(antenas),
+        "por_operador": operadores,
+        "por_tecnologia": tecnologias
+    }
+
+
+@app.get("/map/antenas")
+def get_map_antenas(
+    bbox: str = None,
+    operador: str = None,
+    tecnologia: str = None,
+    limit: int = 500
+):
+    """
+    🗺️ Endpoint específico para el dashboard Spain Towers Visualizer.
+    
+    Proporciona datos de antenas en formato GeoJSON optimizado para mapas:
+    - Filtrado por bounding box (lazy loading)
+    - Filtrado por operador/tecnología
+    - Formato GeoJSON estándar para Leaflet/Mapbox
+    
+    Parámetros:
+    - bbox: min_lon,min_lat,max_lon,max_lat (para carga por viewport)
+    - operador: Filtrar por compañía específica
+    - tecnologia: Filtrar por tecnología específica
+    - limit: Límite de resultados (optimización de rendimiento)
+    """
+    # Carga bajo demanda
+    antenas = load_antenas()
+    
+    # Filtrar por bounding box si se proporciona (lazy loading)
+    filtered_antenas = antenas
+    if bbox:
+        try:
+            min_lon, min_lat, max_lon, max_lat = map(float, bbox.split(','))
+            filtered_antenas = [
+                a for a in filtered_antenas
+                if "lat" in a and "lon" in a and 
+                   min_lon <= a["lon"] <= max_lon and 
+                   min_lat <= a["lat"] <= max_lat
+            ]
+            logger.info(f"📍 Bounding box aplicado: {bbox} -> {len(filtered_antenas)} antenas")
+        except ValueError as e:
+            logger.warning(f"⚠️ Bounding box inválido: {bbox} - {e}")
+            # Continuar sin filtro de bbox en caso de error
+    
+    # Aplicar filtros adicionales
+    if operador:
+        filtered_antenas = [a for a in filtered_antenas if a.get("operador") == operador]
+        logger.info(f"📡 Filtro operador: {operador} -> {len(filtered_antenas)} antenas")
+    
+    if tecnologia:
+        filtered_antenas = [a for a in filtered_antenas if a.get("tecnologia") == tecnologia]
+        logger.info(f"📶 Filtro tecnología: {tecnologia} -> {len(filtered_antenas)} antenas")
+    
+    # Limitar resultados para optimizar rendimiento del frontend
+    result_antenas = filtered_antenas[:limit]
+    
+    # Convertir a formato GeoJSON estándar para el dashboard
+    features = [
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point", 
+                "coordinates": [a["lon"], a["lat"]]
+            },
+            "properties": {
+                "id": a.get("id", f"antenna_{idx}"),
+                "operador": a.get("operador", "Desconocido"),
+                "tecnologia": a.get("tecnologia", "Desconocida"),
+                "provincia": a.get("direccion", "").split(",")[-1].strip() if a.get("direccion") else "Desconocida"
+            }
+        }
+        for idx, a in enumerate(result_antenas) 
+        if "lat" in a and "lon" in a  # Solo antenas con coordenadas válidas
+    ]
+    
+    logger.info(f"🗺️ Enviadas {len(features)} antenas al dashboard")
+    
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "metadata": {
+            "total": len(result_antenas),
+            "limit": limit,
+            "filters_applied": {
+                "bbox": bbox is not None,
+                "operador": operador is not None,
+                "tecnologia": tecnologia is not None
+            }
+        }
+    }
+
+
+# ============================================================
 # ⚠️ MANEJO DE ERRORES
 # ============================================================
 
@@ -251,6 +381,7 @@ def generic_exception_handler(request: Request, exc: Exception):
 @app.on_event("startup")
 async def startup_event():
     """Inicialización segura que no satura la memoria"""
-    logger.info("🚀 Iniciando Spain Mobile Towers API...")
-    # No cargamos datos al inicio para evitar problemas de memoria
-    logger.info("✅ API lista - Carga de datos bajo demanda activada")
+    logger.info("🚀 Iniciando Spain Mobile Towers API v3.0...")
+    logger.info("✅ Compatible con Spain Towers Visualizer Dashboard")
+    logger.info("📍 Endpoints /map/stats y /map/antenas disponibles")
+    logger.info("💾 Carga de datos bajo demanda activada")
