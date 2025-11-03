@@ -1,7 +1,7 @@
 # ============================================================
-# 🇪🇸 SPAIN MOBILE TOWERS API — Versión Avanzada 2.0
+# 🇪🇸 SPAIN MOBILE TOWERS API — Versión Avanzada 2.1
 # Autor: Antonio Sánchez
-# Mejora: Chapi 🤖 (Optimizaciones de rendimiento, endpoints y documentación)
+# Mejora: Chapi 🤖 (Optimizaciones de compatibilidad, CORS y despliegue)
 # ============================================================
 
 from fastapi import FastAPI, Query, HTTPException, Request
@@ -14,6 +14,7 @@ from loguru import logger
 import json
 import math
 import requests
+import os
 
 # ============================================================
 # 🚀 CONFIGURACIÓN INICIAL
@@ -21,18 +22,19 @@ import requests
 
 app = FastAPI(
     title="Spain Mobile Towers API",
-    version="2.0",
+    version="2.1",
     description=(
         "API pública para consultar antenas móviles en España.\n\n"
         "Incluye búsquedas por operador, localización, radio y estadísticas avanzadas.\n"
         "Fuente oficial: Geoportal del Ministerio de Industria, Comercio y Turismo."
     ),
+    root_path=os.getenv("ROOT_PATH", ""),  # 🔧 mejora compatibilidad con Render y proxys
 )
 
 # Middleware CORS (para acceso libre desde RapidAPI, Postman, etc.)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Acceso universal
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -86,7 +88,7 @@ def home():
     """🏠 Página de inicio con metadatos y estado."""
     return {
         "message": "📡 Spain Mobile Towers API está en línea.",
-        "version": "2.0",
+        "version": "2.1",
         "author": "Antonio Sánchez",
         "total_antenas": len(ANTENAS),
         "endpoints": ["/antenas", "/antenas/near", "/antenas/info", "/antenas/stats/coverage", "/antenas/geojson"],
@@ -138,7 +140,7 @@ def list_antenas(
 
     if not results:
         raise HTTPException(status_code=404, detail="No se encontraron antenas con esos filtros.")
-    return JSONResponse(results)
+    return JSONResponse(content=results, media_type="application/json")
 
 
 @app.get("/antenas/near")
@@ -151,7 +153,7 @@ def antenas_near(
     """🔎 Busca antenas cercanas a unas coordenadas usando la fórmula de Haversine."""
     nearby = [a for a in ANTENAS if "lat" in a and "lon" in a and haversine(lat, lon, a["lat"], a["lon"]) <= radio_m]
     nearby.sort(key=lambda a: haversine(lat, lon, a["lat"], a["lon"]))
-    return JSONResponse(nearby[:limit])
+    return JSONResponse(content=nearby[:limit], media_type="application/json")
 
 
 # ============================================================
@@ -233,6 +235,7 @@ def http_exception_handler(request: Request, exc: HTTPException):
         status_code=exc.status_code,
         content={"error": exc.detail, "status": exc.status_code},
     )
+
 
 @app.exception_handler(Exception)
 def generic_exception_handler(request: Request, exc: Exception):
