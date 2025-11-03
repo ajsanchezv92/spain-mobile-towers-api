@@ -3,12 +3,16 @@ from fastapi.responses import JSONResponse
 import json
 import math
 from collections import Counter
+import os
 
 app = FastAPI(title='Spain Mobile Towers API', version='1.0')
 
+# Ruta segura del JSON
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+JSON_PATH = os.path.join(BASE_DIR, 'antenas.json')
 
 # Cargar datos en memoria
-with open('antenas.json', 'r', encoding='utf-8') as f:
+with open(JSON_PATH, 'r', encoding='utf-8') as f:
     ANTENAS = json.load(f)
 
 
