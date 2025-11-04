@@ -1,7 +1,7 @@
 # ============================================================
 # 🇪🇸 SPAIN MOBILE TOWERS API — Versión Avanzada 3.0
 # Autor: Antonio Sánchez
-# Mejora: Chapi 🤖 (Optimizaciones de compatibilidad, CORS y despliegue)
+# Mejora: (Optimizaciones de compatibilidad, CORS y despliegue)
 # ============================================================
 
 from fastapi import FastAPI, Query, HTTPException, Request
